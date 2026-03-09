@@ -6,14 +6,13 @@ from fyers_apiv3 import fyersModel
 
 # ─────────────────────── PAGE CONFIG ───────────────────────
 st.set_page_config(
-    page_title="Live Option Chain | Fyers",
+    page_title="Live PCR Dashboard | Fyers",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ─────────────────────── SESSION STATE ─────────────────────
-# GitHub original state
 for k, v in {
     "pcr_history":       [],
     "last_pcr_time":     None,
@@ -27,7 +26,7 @@ for k, v in {
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ─────────────────────── SIDEBAR (Original UI) ───────────────────────────
+# ─────────────────────── SIDEBAR ───────────────────────────
 st.sidebar.title("⚙️ Fyers Login")
 st.sidebar.markdown("---")
 client_id    = st.sidebar.text_input("Client ID (App ID)", value="OIROK73TDQ-100")
@@ -51,7 +50,7 @@ if st.sidebar.button("🔗 Connect to Fyers", use_container_width=True):
 st.sidebar.info("🟢 Connected" if st.session_state.fyers else "🔴 Not connected")
 st.sidebar.markdown("---")
 
-# Index & Expiry Selection (Original GitHub Code)
+# Index & Expiry Selection
 index_options = {"NIFTY 50": "NSE:NIFTY50-INDEX", "BANK NIFTY": "NSE:NIFTYBANK-INDEX", "SENSEX": "BSE:SENSEX-INDEX"}
 selected_index_name = st.sidebar.selectbox("Choose Index", list(index_options.keys()))
 selected_symbol = index_options[selected_index_name]
@@ -89,18 +88,17 @@ refresh_sec = st.sidebar.slider("Interval (seconds)", 1, 10, 5)
 auto_on = st.sidebar.toggle("Enable Auto-Refresh", value=st.session_state.auto_refresh)
 st.session_state.auto_refresh = auto_on
 
-# 👨‍💻 Author Info (Original)
+# 👨‍💻 Author Info
 st.sidebar.markdown("---")
 st.sidebar.subheader("👨‍💻 Developer")
 st.sidebar.markdown("**Narendra** [📸 Instagram (@chandeln16)](https://instagram.com/chandeln16)")
 
-# ─────────────────────── FIXED HELPERS (Keeping Original Logic) ──────────────────
+# ─────────────────────── FIXED HELPERS ──────────────────
 
 def fetch_chain(fyers_obj, symbol, timestamp):
-    return fyers_obj.optionchain(data={"symbol": symbol, "strikecount": 7, "timestamp": str(timestamp)})
+    return fyers_obj.optionchain(data={"symbol": symbol, "strikecount": 50, "timestamp": str(timestamp)})
 
 def parse_chain(resp):
-    """FIXED: Uses your working keys but keeps GitHub's structure."""
     if resp.get('s') != 'ok':
         raise ValueError(resp.get("message", "API error"))
     
@@ -108,14 +106,14 @@ def parse_chain(resp):
     raw = data_dict.get("optionsChain", [])
     if not raw: raise ValueError("No data available.")
     
-    atm = data_dict.get("atm", 0)
+    # Force float type to avoid calculation errors
+    atm = float(data_dict.get("atm", 0))
+    
     df = pd.DataFrame(raw)
     
-    # Working keys from your source
     df_c = df[df['option_type'] == 'CE'].copy().rename(columns={"oi":"OI", "oich":"Chng OI", "volume":"Volume", "ltp":"LTP", "strike_price":"Strike"})
     df_p = df[df['option_type'] == 'PE'].copy().rename(columns={"oi":"OI", "oich":"Chng OI", "volume":"Volume", "ltp":"LTP", "strike_price":"Strike"})
     
-    # Adding missing IV and Chng Vol for UI consistency
     for d in [df_c, df_p]:
         if 'IV' not in d: d['IV'] = 0.0
         if 'Chng Volume' not in d: d['Chng Volume'] = 0
@@ -123,7 +121,6 @@ def parse_chain(resp):
     return df_c.sort_values("Strike"), df_p.sort_values("Strike"), atm
 
 def compute_summary(df_c, df_p):
-    # GitHub's original summary logic
     def sdiv(a, b): return round(a / b, 4) if b else 0.0
     tc_oi, tp_oi = df_c["OI"].sum(), df_p["OI"].sum()
     tc_co, tp_co = df_c["Chng OI"].sum(), df_p["Chng OI"].sum()
@@ -136,10 +133,16 @@ def compute_summary(df_c, df_p):
         "Volume PCR": sdiv(tp_vol, tc_vol), "Change Volume PCR": 0.0, "Call Chng Volume": 0, "Put Chng Volume": 0
     }
 
-def maybe_record_pcr(pcr_val):
+def maybe_record_pcr(s_data):
     now = datetime.now()
     if st.session_state.last_pcr_time is None or (now - st.session_state.last_pcr_time).total_seconds() >= 300:
-        st.session_state.pcr_history.append({"Time": now.strftime("%H:%M:%S"), "Change OI PCR": pcr_val})
+        st.session_state.pcr_history.append({
+            "Time": now.strftime("%H:%M:%S"), 
+            "OI PCR": s_data["OI PCR"],
+            "Change OI PCR": s_data["Change OI PCR"],
+            "Volume PCR": s_data["Volume PCR"],
+            "Change Volume PCR": s_data["Change Volume PCR"]
+        })
         st.session_state.last_pcr_time = now
 
 def sentiment(v):
@@ -147,18 +150,9 @@ def sentiment(v):
     if v < 0.8: return "🔴 Bearish"
     return "🟡 Neutral"
 
-def hl_atm(row, atm):
-    s = "background-color:#fff9c4;color:black;font-weight:bold;" if row["Strike"] == atm else ""
-    return [s] * len(row)
 
-def col_chng(v):
-    if v > 0: return "color:#00a651;font-weight:600"
-    if v < 0: return "color:#cc0000;font-weight:600"
-    return ""
-
-# ─────────────────────── MAIN DASHBOARD (Full Original UI) ────────────────────
-st.title(f"📊 {selected_index_name} Live Option Chain")
-st.caption("Fyers API v3  •  ATM ± 7 Strikes")
+# ─────────────────────── MAIN DASHBOARD ────────────────────
+st.title(f"📊 {selected_index_name} PCR Metrics Dashboard")
 
 if not st.session_state.fyers or not st.session_state.current_expiry:
     st.warning("👈 Connect Fyers and select Expiry from the sidebar.")
@@ -166,9 +160,72 @@ if not st.session_state.fyers or not st.session_state.current_expiry:
 
 try:
     raw_resp = fetch_chain(st.session_state.fyers, selected_symbol, selected_timestamp)
-    df_c, df_p, atm = parse_chain(raw_resp)
+    df_c, df_p, api_atm = parse_chain(raw_resp)
+    
+    strikes_list = sorted(df_c['Strike'].unique().tolist())
+    
+    if strikes_list:
+        # SMART ATM LOGIC: Agar Fyers ka ATM galat hai, toh Call/Put Premium ke aadhar par ATM dhundho
+        if api_atm <= 0:
+            try:
+                merged = pd.merge(df_c[['Strike', 'LTP']], df_p[['Strike', 'LTP']], on='Strike', suffixes=('_C', '_P'))
+                merged['diff'] = abs(merged['LTP_C'] - merged['LTP_P'])
+                atm_closest = merged.loc[merged['diff'].idxmin()]['Strike']
+            except:
+                atm_closest = strikes_list[len(strikes_list)//2]
+        else:
+            atm_closest = min(strikes_list, key=lambda x: abs(x - api_atm))
+            
+        atm_index = strikes_list.index(atm_closest)
+        
+        # 1. Lower Strikes Generator (-12 se ATM tak)
+        lower_options = []
+        lower_map = {}
+        for i in range(-12, 1): # -12 se 0 tak loop chalega
+            idx = atm_index + i
+            if 0 <= idx < len(strikes_list):
+                s = strikes_list[idx]
+                label = f"{s:,.0f} (ATM {i})" if i < 0 else f"{s:,.0f} (ATM)"
+                lower_options.append(label)
+                lower_map[label] = s
+                
+        # 2. Upper Strikes Generator (ATM se +12 tak)
+        upper_options = []
+        upper_map = {}
+        for i in range(0, 13): # 0 se +12 tak loop chalega
+            idx = atm_index + i
+            if 0 <= idx < len(strikes_list):
+                s = strikes_list[idx]
+                label = f"{s:,.0f} (ATM +{i})" if i > 0 else f"{s:,.0f} (ATM)"
+                upper_options.append(label)
+                upper_map[label] = s
+
+        # 3. UI 3 Box Menu
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🎯 Strike Range Menu")
+        
+        # Box 1: Lower Strike (Default sabse pehla yaani -12 select hoga)
+        selected_lower_label = st.sidebar.selectbox("📉 Select Lower Strike (-12 to ATM)", options=lower_options, index=0)
+        
+        # Box 2: Locked ATM Price (Disabled Box)
+        st.sidebar.selectbox("📍 Current ATM (Fixed)", options=[f"{atm_closest:,.0f} (ATM)"], disabled=True)
+        
+        # Box 3: Upper Strike (Default sabse aakhiri yaani +12 select hoga)
+        selected_upper_label = st.sidebar.selectbox("📈 Select Upper Strike (ATM to +12)", options=upper_options, index=len(upper_options)-1)
+        
+        # Dictionary Mapping se 100% exact strike value nikalna (No string replace errors)
+        start_strike = lower_map[selected_lower_label]
+        end_strike = upper_map[selected_upper_label]
+        
+        # Data Filter Karna
+        df_c = df_c[(df_c['Strike'] >= start_strike) & (df_c['Strike'] <= end_strike)]
+        df_p = df_p[(df_p['Strike'] >= start_strike) & (df_p['Strike'] <= end_strike)]
+        
+        st.caption(f"Fyers API v3 • Current ATM: **{atm_closest:,.0f}** • Calculating data for strikes: **{start_strike:,.0f}** to **{end_strike:,.0f}**")
+
+    # Metrics calculation 
     s = compute_summary(df_c, df_p)
-    maybe_record_pcr(s["Change OI PCR"])
+    maybe_record_pcr(s)
 
     # UI Row 1 - Metrics
     a1, a2, a3, a4 = st.columns(4)
@@ -182,23 +239,35 @@ try:
     b1.metric("⚖️ OI PCR", s["OI PCR"], delta=sentiment(s["OI PCR"]), delta_color="off")
     b2.metric("⚖️ Change OI PCR", s["Change OI PCR"], delta=sentiment(s["Change OI PCR"]), delta_color="off")
     b3.metric("📊 Volume PCR", s["Volume PCR"], delta=sentiment(s["Volume PCR"]), delta_color="off")
+    b4.metric("📊 Chng Vol PCR", s["Change Volume PCR"], delta=sentiment(s["Change Volume PCR"]), delta_color="off")
 
-    # SECTION 2 — Combined Table (Original Style)
-    st.markdown("---")
-    st.subheader(f"🗂️ Option Chain (ATM: {atm:,.0f})")
-    df_chain = pd.merge(
-        df_c.rename(columns={"OI":"Call OI", "Chng OI":"Call Chng OI", "Volume":"Call Vol", "LTP":"Call LTP", "IV":"Call IV"}),
-        df_p.rename(columns={"OI":"Put OI", "Chng OI":"Put Chng OI", "Volume":"Put Vol", "LTP":"Put LTP", "IV":"Put IV"}),
-        on="Strike"
-    )
-    cols = ["Call IV", "Call LTP", "Call Chng OI", "Call OI", "Strike", "Put OI", "Put Chng OI", "Put LTP", "Put IV"]
-    st.dataframe(df_chain[cols].style.apply(hl_atm, atm=atm, axis=1).map(col_chng, subset=["Call Chng OI","Put Chng OI"]), use_container_width=True, height=400)
-
-    # SECTION 3 — History & Chart (Original Style)
+    # SECTION 2 — Separate Tables & Chart
     if st.session_state.pcr_history:
         st.markdown("---")
-        st.subheader("🕐 Change OI PCR — 5-Minute Snapshot")
+        st.subheader("🕐 5-Minute PCR Snapshot Tables")
+        
         df_h = pd.DataFrame(st.session_state.pcr_history)
+        
+        t1, t2, t3, t4 = st.columns(4)
+        
+        with t1:
+            st.markdown("**(1) OI PCR History**")
+            st.dataframe(df_h[["Time", "OI PCR"]], use_container_width=True, hide_index=True)
+            
+        with t2:
+            st.markdown("**(2) Change OI PCR History**")
+            st.dataframe(df_h[["Time", "Change OI PCR"]], use_container_width=True, hide_index=True)
+            
+        with t3:
+            st.markdown("**(3) Volume PCR History**")
+            st.dataframe(df_h[["Time", "Volume PCR"]], use_container_width=True, hide_index=True)
+            
+        with t4:
+            st.markdown("**(4) Change Volume PCR History**")
+            st.dataframe(df_h[["Time", "Change Volume PCR"]], use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("📈 PCR Trends Chart")
         st.line_chart(df_h.set_index("Time"), use_container_width=True)
 
 except Exception as ex:
